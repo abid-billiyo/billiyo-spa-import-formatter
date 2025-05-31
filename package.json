@@ -3,7 +3,7 @@
   "displayName": "Import Formatter",
   "description": "Groups, sorts, and formats imports by category and line length, including absolute path conversion and type splitting.",
   "version": "0.0.1",
-  "publisher": "Abid Shahriar",
+  "publisher": "abid",
   "author": {
     "name": "Abid Shahriar",
     "email": "abidshahriar7@gmail.com"
@@ -16,8 +16,8 @@
     "vscode": "^1.70.0"
   },
   "main": "./dist/extension.js",
-  "activationEvents": [
-    "onCommand:importFormatter.organizeImports"
+   "activationEvents": [
+    "onStartupFinished" 
   ],
   "contributes": {
     "commands": [
@@ -41,11 +41,11 @@
     "package": "vsce package"
   },
   "devDependencies": {
+    "@types/node": "^22.15.29",
     "@types/vscode": "^1.70.0",
-    "typescript": "^4.0.0",
     "vsce": "^2.15.0"
   },
   "dependencies": {
-    "@types/node": "^22.15.29"
+    "typescript": "^5.8.3"
   }
 }

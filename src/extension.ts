@@ -370,7 +370,7 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  let disposable = vscode.commands.registerCommand('importGrouper.organizeImports', async () => {
+  let disposable = vscode.commands.registerCommand('importFormatter.organizeImports', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) return;
 
