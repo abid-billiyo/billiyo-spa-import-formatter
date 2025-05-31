@@ -1,32 +1,41 @@
 {
-  "name": "import-grouper",
-  "displayName": "Import Grouper",
-  "description": "Groups and sorts imports by category and line length",
+  "name": "import-formatter",
+  "displayName": "Import Formatter",
+  "description": "Groups, sorts, and formats imports by category and line length, including absolute path conversion and type splitting.",
   "version": "0.0.1",
+  "publisher": "Abid Shahriar",
+  "author": {
+    "name": "Abid Shahriar",
+    "email": "abidshahriar7@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abid-billiyo/billiyo-spa-import-formatter"
+  },
   "engines": {
     "vscode": "^1.70.0"
   },
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onCommand:importGrouper.organizeImports"
+    "onCommand:importFormatter.organizeImports"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "importGrouper.organizeImports",
-        "title": "Group and Sort Imports"
+        "command": "importFormatter.organizeImports",
+        "title": "Organize Imports"
       }
     ],
     "keybindings": [
       {
-        "command": "importGrouper.organizeImports",
+        "command": "importFormatter.organizeImports",
         "key": "alt+shift+d",
         "when": "editorTextFocus"
       }
     ]
   },
   "scripts": {
-    "vscode:prepublish": "tsc -p ./",
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package"
