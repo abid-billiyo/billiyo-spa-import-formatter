@@ -1,0 +1,39 @@
+{
+  "name": "import-grouper",
+  "displayName": "Import Grouper",
+  "description": "Groups and sorts imports by category and line length",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:importGrouper.organizeImports"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "importGrouper.organizeImports",
+        "title": "Group and Sort Imports"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "importGrouper.organizeImports",
+        "key": "alt+shift+d",
+        "when": "editorTextFocus"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "tsc -p ./",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.70.0",
+    "typescript": "^4.0.0",
+    "vsce": "^2.15.0"
+  }
+}
