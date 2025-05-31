@@ -115,7 +115,7 @@ function sortNamedImportsInMultiLine(importLine: string): string {
 
   namedImports.sort((a, b) => a.length - b.length);
 
-  const indentation = '  ';
+  const indentation = '  '; // Consistent 2 spaces
   const sortedNamedImportsFormatted = namedImports.map((imp) => `${indentation}${imp},`).join('\n');
 
   return `${prefix}\n${sortedNamedImportsFormatted}\n${suffix}`;
@@ -135,7 +135,7 @@ function getModulePathFromImport(importLine: string): string {
   if (directImportMatch && directImportMatch[1]) {
     return directImportMatch[1];
   }
-  return importLine;
+  return importLine; // Fallback, though ideally shouldn't be reached for valid imports
 }
 
 /**
@@ -234,13 +234,15 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
     // Always sort named imports within multi-line statements first
     imp = sortNamedImportsInMultiLine(imp);
 
-    const namedImportsMatch = imp.match(/import {([^}]+)} from ['"]([^'"]+)[''];?/);
-    const modulePath = namedImportsMatch ? namedImportsMatch[2] : '';
+    // *** FIX START: Get the module path correctly for ALL import types ***
+    const currentModulePath = getModulePathFromImport(imp);
+    const isFromSrc = currentModulePath.startsWith('src/');
+    // *** FIX END ***
 
-    // Determine if it's a 'src' import (based on the path *after* potential conversion)
-    const isFromSrc = modulePath.startsWith('src/');
+    const namedImportsMatch = imp.match(/import {([^}]+)} from ['"]([^'"]+)[''];?/);
 
     // --- Handle TSLS analysis and splitting for SRC named imports first ---
+    // Only attempt splitting if it's a named import AND it's from src
     if (namedImportsMatch && isFromSrc) {
       const namedImports = namedImportsMatch[1]
         .split(',')
@@ -272,8 +274,8 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
         nonTypesToImport = symbolClassifications.filter((s) => !s.isType).map((s) => s.name);
 
         if (typesToImport.length > 0 && nonTypesToImport.length > 0) {
-          groups.types.push(`import { ${typesToImport.join(', ')} } from '${modulePath}';`);
-          imp = `import { ${nonTypesToImport.join(', ')} } from '${modulePath}';`;
+          groups.types.push(`import { ${typesToImport.join(', ')} } from '${currentModulePath}';`); // Use currentModulePath here
+          imp = `import { ${nonTypesToImport.join(', ')} } from '${currentModulePath}';`; // Use currentModulePath here
         } else if (typesToImport.length > 0 && nonTypesToImport.length === 0) {
           groups.types.push(imp);
           continue;
@@ -288,24 +290,26 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
     }
 
     // --- General Grouping Logic ---
-    if (getModulePathFromImport(imp).startsWith('next/')) {
+    // Now use currentModulePath for all checks
+    if (currentModulePath.startsWith('next/')) {
       groups.next.push(imp);
     } else if (/from ['"]react-(redux|hook-form)|react-hot-toast|redux/.test(imp)) {
       groups.thirdparty.push(imp);
-    } else if (getModulePathFromImport(imp).startsWith('react')) {
+    } else if (currentModulePath.startsWith('react')) {
       groups.react.push(imp);
-    } else if (getModulePathFromImport(imp).startsWith('@mui/')) {
+    } else if (currentModulePath.startsWith('@mui/')) {
       const transformedImports = transformMuiImport(imp);
       groups.mui.push(...transformedImports);
-    } else if (getModulePathFromImport(imp).startsWith('src/store/')) {
+    } else if (currentModulePath.startsWith('src/store/')) {
       groups.reduxstore.push(imp);
-    } else if (getModulePathFromImport(imp).startsWith('src/api-clients/')) {
+    } else if (currentModulePath.startsWith('src/api-clients/')) {
       groups.api.push(imp);
-    } else if (getModulePathFromImport(imp).includes('/hooks')) {
+    } else if (currentModulePath.includes('/hooks')) {
       groups.hooks.push(imp);
-    } else if (getModulePathFromImport(imp).includes('/utils')) {
+    } else if (currentModulePath.includes('/utils')) {
       groups.utils.push(imp);
     } else if (isFromSrc) {
+      // This now correctly handles all 'src/' paths not caught by specific 'src/' rules
       groups.local.push(imp);
     } else {
       groups.unknown.push(imp);
@@ -399,6 +403,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Get the line number of the first import statement
     const firstImportLineNum = document.positionAt(firstImportMatchIndex).line;
+    // --- CORRECTED LINE HERE ---
     const lastImportLineNum = document.positionAt(lastImportMatchIndex).line;
 
     // Find the true start of the import block by looking upwards from the first import line.
