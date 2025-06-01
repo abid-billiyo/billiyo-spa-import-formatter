@@ -14,17 +14,24 @@ async function getSymbolScriptElementKind(
       position
     );
 
+    console.log(`Hover position for ${symbolName}: Line ${position.line}, Character ${position.character}`);
+
     if (hovers && hovers.length > 0) {
       const hoverContent = hovers[0].contents.map((c) => (typeof c === 'string' ? c : c.value)).join('\n');
+      console.log(`Hover content for ${symbolName}: ${hoverContent}`);
 
-      if (/\binterface\b/.test(hoverContent)) return ts.ScriptElementKind.interfaceElement;
-      if (/\btype\b|\(alias\)\s*type\s+\w+/.test(hoverContent)) return ts.ScriptElementKind.typeElement;
-      if (/\benum\b/.test(hoverContent)) return ts.ScriptElementKind.enumElement;
-      if (/\bclass\b/.test(hoverContent)) return ts.ScriptElementKind.classElement;
-      if (/\bnamespace\b/.test(hoverContent)) return ts.ScriptElementKind.moduleElement;
-      if (/\bfunction\b/.test(hoverContent)) return ts.ScriptElementKind.functionElement;
-      if (/\b(const|let|var)\b/.test(hoverContent)) return ts.ScriptElementKind.variableElement;
-      if (/\b(React\.FC|React\.ComponentType|JSX\.Element|elementType)\b/.test(hoverContent))
+      // More flexible matching for types
+      if (/\binterface\b|\(interface\)|interface\s+\w+/i.test(hoverContent))
+        return ts.ScriptElementKind.interfaceElement;
+      if (/\btype\b|\(alias\)\s*type\s+\w+|\(type\)|type\s+\w+/i.test(hoverContent))
+        return ts.ScriptElementKind.typeElement;
+      if (/\benum\b|\(enum\)|enum\s+\w+/i.test(hoverContent)) return ts.ScriptElementKind.enumElement;
+      if (/\bclass\b|\(class\)|class\s+\w+/i.test(hoverContent)) return ts.ScriptElementKind.classElement;
+      if (/\bnamespace\b|\(namespace\)|namespace\s+\w+/i.test(hoverContent)) return ts.ScriptElementKind.moduleElement;
+      if (/\bfunction\b|\(function\)|function\s+\w+/i.test(hoverContent)) return ts.ScriptElementKind.functionElement;
+      if (/\b(const|let|var)\b|\(variable\)|const\s+\w+/i.test(hoverContent))
+        return ts.ScriptElementKind.variableElement;
+      if (/\b(React\.FC|React\.ComponentType|JSX\.Element|elementType)\b/i.test(hoverContent))
         return ts.ScriptElementKind.functionElement;
     }
   } catch (e) {
@@ -47,7 +54,7 @@ function isSymbolATypeKind(kind: ts.ScriptElementKind | undefined): boolean {
 }
 
 function transformMuiImport(importLine: string): string[] {
-  const componentRegex = /import {([^}]+)} from ['"]@mui\/(material|icons-material)[''];?/;
+  const componentRegex = /import {([^}]+)} from ['"]@mui\/(material|icons-material)['']/;
   const match = importLine.match(componentRegex);
   if (!match) return [importLine.replace(/;\s*$/, '')];
 
@@ -66,9 +73,9 @@ function transformMuiImport(importLine: string): string[] {
 }
 
 function getModulePathFromImport(importLine: string): string {
-  const match = importLine.match(/from\s*['"]([^'"]+)['"];?/);
+  const match = importLine.match(/from\s*['"]([^'"]+)['"]/);
   if (match && match[1]) return match[1];
-  const directImportMatch = importLine.match(/^import\s*['"]([^'"]+)['"];?/);
+  const directImportMatch = importLine.match(/^import\s*['"]([^'"]+)['"]/);
   if (directImportMatch && directImportMatch[1]) return directImportMatch[1];
   return '';
 }
@@ -93,7 +100,7 @@ function formatImportStatement(imports: string[], modulePath: string): string {
 }
 
 async function convertRelativeImportsToAbsolute(importLine: string, document: vscode.TextDocument): Promise<string> {
-  const match = importLine.match(/from\s*['"]([^'"]+)['"];?/);
+  const match = importLine.match(/from\s*['"]([^'"]+)['"]/);
   if (!match) return importLine.replace(/;\s*$/, '');
 
   let modulePath = match[1];
@@ -107,12 +114,21 @@ async function convertRelativeImportsToAbsolute(importLine: string, document: vs
   const workspaceRoot = workspaceFolders[0].uri.fsPath;
   if (absolutePath.startsWith(workspaceRoot)) {
     const relativeToSrc = path.relative(path.join(workspaceRoot, 'src'), absolutePath);
-    if (!relativeToSrc.startsWith('..')) {
-      modulePath = `src/${relativeToSrc.replace(/\\/g, '/')}`;
+    const normalizedPath = relativeToSrc.replace(/\\/g, '/');
+    if (normalizedPath) {
+      modulePath = `src/${normalizedPath}`;
+    } else {
+      // Fallback: Map to src/api-clients/ if no direct src/ mapping
+      const relativeToApiClients = path.relative(path.join(workspaceRoot, 'src', 'api-clients'), absolutePath);
+      if (relativeToApiClients && !relativeToApiClients.startsWith('..')) {
+        modulePath = `src/api-clients/${relativeToApiClients.replace(/\\/g, '/')}`;
+      }
     }
   }
 
-  return importLine.replace(match[1], modulePath).replace(/;\s*$/, '');
+  const convertedImport = importLine.replace(match[1], modulePath).replace(/;\s*$/, '');
+  console.log(`Converted ${importLine} to ${convertedImport}`);
+  return convertedImport;
 }
 
 export async function groupAndSortImports(imports: string[], document: vscode.TextDocument): Promise<string> {
@@ -125,15 +141,72 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
     reduxstore: [],
     api: [],
     hooks: [],
-    local: [],
     utils: [],
-    unknown: [],
+    local: [],
+    other: [],
   };
 
-  const documentText = document.getText();
+  let remainingImports = [...imports];
 
-  for (let imp of imports) {
-    imp = imp.replace(/;\s*$/, '');
+  // Step 1: Filter Next.js Imports
+  remainingImports = remainingImports.filter((imp) => {
+    const modulePath = getModulePathFromImport(imp);
+    if (modulePath.startsWith('next/')) {
+      groups.next.push(imp);
+      return false;
+    }
+    return true;
+  });
+
+  // Step 2: Filter React Imports (only from 'react')
+  remainingImports = remainingImports.filter((imp) => {
+    const modulePath = getModulePathFromImport(imp);
+    if (modulePath === 'react') {
+      groups.react.push(imp);
+      return false;
+    }
+    return true;
+  });
+
+  // Step 3: Filter MUI Imports
+  remainingImports = remainingImports.filter((imp) => {
+    const modulePath = getModulePathFromImport(imp);
+    if (modulePath.startsWith('@mui/')) {
+      const transformed = transformMuiImport(imp);
+      groups.mui.push(...transformed);
+      return false;
+    }
+    return true;
+  });
+
+  // Step 4: Filter Third Party Imports (all non-src/, non-next/, non-react, non-mui/)
+  remainingImports = remainingImports.filter((imp) => {
+    const modulePath = getModulePathFromImport(imp);
+    if (
+      !modulePath.startsWith('src/') &&
+      modulePath !== 'react' &&
+      !modulePath.startsWith('next/') &&
+      !modulePath.startsWith('@mui/')
+    ) {
+      groups.thirdparty.push(imp);
+      return false;
+    }
+    return true;
+  });
+
+  // Step 5: Process src/* Imports for Type Detection
+  const srcImports: { imp: string; originalImp: string; position: number }[] = [];
+  remainingImports.forEach((imp, index) => {
+    const modulePath = getModulePathFromImport(imp);
+    if (modulePath.startsWith('src/')) {
+      const startIdx = document.getText().indexOf(imp);
+      srcImports.push({ imp, originalImp: imp, position: startIdx });
+    }
+  });
+  remainingImports = remainingImports.filter((imp) => !getModulePathFromImport(imp).startsWith('src/'));
+
+  // Process src/* imports for type detection
+  for (const { imp, originalImp, position } of srcImports) {
     const modulePath = getModulePathFromImport(imp);
 
     if (imp.startsWith('import type')) {
@@ -144,34 +217,43 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
     const defaultImportMatch = imp.match(/import (\w+) from ['"]([^'"]+)['']/);
     if (defaultImportMatch) {
       const identifier = defaultImportMatch[1];
-      const startIdx = documentText.indexOf(imp);
-      const identifierIndex = imp.indexOf(identifier);
-      const position = document.positionAt(startIdx + identifierIndex);
-      const kind = await getSymbolScriptElementKind(document, position, identifier);
-      if (isSymbolATypeKind(kind)) {
+      const identifierIndex = originalImp.indexOf(identifier);
+      const hoverPosition = document.positionAt(position + identifierIndex);
+      const kind = await getSymbolScriptElementKind(document, hoverPosition, identifier);
+      console.log(`Default import: ${imp}, Kind: ${kind}, Position: ${hoverPosition.line},${hoverPosition.character}`);
+      const isLikelyTypePath =
+        modulePath.endsWith('/types') ||
+        (modulePath.startsWith('src/api-clients/') && !modulePath.includes('apiClientBuilders'));
+      if (isSymbolATypeKind(kind) || (kind === undefined && isLikelyTypePath)) {
         groups.types.push(imp);
       } else {
-        categorizeImport(imp, modulePath, groups);
+        categorizeSrcImport(imp, modulePath, groups, kind);
       }
       continue;
     }
 
     const namedImportsMatch = imp.match(/import {([^}]+)} from ['"]([^'"]+)['']/);
-    if (namedImportsMatch && modulePath.startsWith('src/')) {
+    if (namedImportsMatch) {
       const namedImports = namedImportsMatch[1]
         .split(',')
         .map((s) => s.trim())
         .filter((s) => s);
-      const startIdx = documentText.indexOf(imp);
+      const startIdx = position;
 
       const symbolClassifications = await Promise.all(
         namedImports.map(async (name) => {
-          const relativeIndex = imp.indexOf(name);
+          const relativeIndex = originalImp.indexOf(name);
           if (relativeIndex === -1) return { name, isType: false };
           const absoluteIndex = startIdx + relativeIndex;
-          const position = document.positionAt(absoluteIndex);
-          const kind = await getSymbolScriptElementKind(document, position, name);
-          return { name, isType: isSymbolATypeKind(kind) };
+          const hoverPosition = document.positionAt(absoluteIndex);
+          const kind = await getSymbolScriptElementKind(document, hoverPosition, name);
+          console.log(
+            `Named import: ${name} from ${modulePath}, Kind: ${kind}, Position: ${hoverPosition.line},${hoverPosition.character}`
+          );
+          const isLikelyTypePath =
+            modulePath.endsWith('/types') ||
+            (modulePath.startsWith('src/api-clients/') && !modulePath.includes('apiClientBuilders'));
+          return { name, isType: isSymbolATypeKind(kind) || (kind === undefined && isLikelyTypePath) };
         })
       );
 
@@ -185,32 +267,31 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
 
       if (nonTypesToImport.length > 0) {
         const nonTypesImportLine = formatImportStatement(nonTypesToImport, modulePath);
-        categorizeImport(nonTypesImportLine, modulePath, groups);
+        categorizeSrcImport(nonTypesImportLine, modulePath, groups);
       }
     } else {
-      categorizeImport(imp, modulePath, groups);
+      categorizeSrcImport(imp, modulePath, groups);
     }
   }
 
+  // Step 6: Categorize Remaining Imports (Other Imports)
+  remainingImports.forEach((imp) => {
+    groups.other.push(imp);
+  });
+
   const formatGroup = (label: string, lines: string[]): string[] => {
     if (!lines.length) return [];
-
-    // Sort all imports by effective length
     const sortedImports = lines.sort((a, b) => {
-      // Calculate effective length: for multi-line, use the length of the longest line
       const getEffectiveLength = (imp: string) => {
         if (!imp.includes('\n')) return imp.length;
         const lines = imp.split('\n');
         const longestLine = lines.reduce((max, line) => Math.max(max, line.length), 0);
         return longestLine;
       };
-
       const aLength = getEffectiveLength(a);
       const bLength = getEffectiveLength(b);
-
       return aLength - bLength;
     });
-
     return [`// ** ${label} Imports`, ...sortedImports];
   };
 
@@ -227,7 +308,7 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
     'Hooks',
     'Local',
     'Utils',
-    'Unknown',
+    'Other',
   ];
 
   for (const label of groupOrder) {
@@ -243,28 +324,27 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
   return finalOutput.join('\n');
 }
 
-function categorizeImport(importLine: string, modulePath: string, groups: Record<string, string[]>) {
-  if (modulePath.startsWith('next/')) {
-    groups.next.push(importLine);
-  } else if (/react-(redux|hook-form)|react-hot-toast|redux/.test(modulePath)) {
-    groups.thirdparty.push(importLine);
-  } else if (modulePath.startsWith('react')) {
-    groups.react.push(importLine);
-  } else if (modulePath.startsWith('@mui/')) {
-    const transformed = transformMuiImport(importLine);
-    groups.mui.push(...transformed);
-  } else if (modulePath.startsWith('src/store/')) {
+function categorizeSrcImport(
+  importLine: string,
+  modulePath: string,
+  groups: Record<string, string[]>,
+  kind?: ts.ScriptElementKind
+) {
+  console.log(`Categorizing src import: ${importLine}, Module: ${modulePath}, Kind: ${kind}`);
+  if (modulePath.startsWith('src/store/')) {
     groups.reduxstore.push(importLine);
-  } else if (modulePath.startsWith('src/api-clients/')) {
+  } else if (modulePath.startsWith('src/api-clients/') && (kind === undefined || !isSymbolATypeKind(kind))) {
     groups.api.push(importLine);
   } else if (modulePath.includes('/hooks')) {
     groups.hooks.push(importLine);
   } else if (modulePath.includes('/utils')) {
     groups.utils.push(importLine);
+  } else if (modulePath.startsWith('src/') && isSymbolATypeKind(kind)) {
+    groups.types.push(importLine);
   } else if (modulePath.startsWith('src/')) {
     groups.local.push(importLine);
   } else {
-    groups.unknown.push(importLine);
+    groups.other.push(importLine);
   }
 }
 
@@ -282,9 +362,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     if (!originalImports.length) return;
 
+    // Step 1: Convert all relative imports to absolute paths
     const convertedImports = await Promise.all(
       originalImports.map((imp) => convertRelativeImportsToAbsolute(imp, document))
     );
+    console.log('Converted Imports:', convertedImports);
+
+    // Step 2: Group and sort imports using the converted imports
     const groupedAndSortedImports = await groupAndSortImports(convertedImports, document);
 
     const firstImportMatchIndex = text.indexOf(originalImports[0]);
