@@ -52,7 +52,7 @@ import { useState } from 'react';
 import { useDispatch } from 'react-redux';
 import { fetchUsers } from '../../store/slices/userSlice';
 import { AppLayout } from '../layout/AppLayout';
-import type { User } from '../types';
+import { User } from '../types';
 import { useRouter } from 'next/router';
 import { SomeIcon } from '@mui/icons-material';
 import { useAuth } from '../hooks/useAuth';
@@ -77,7 +77,7 @@ import SomeIcon from '@mui/icons-material/SomeIcon';
 import { useDispatch } from 'react-redux';
 
 // ** Types Imports
-import type { User } => 'src/types';
+import { User } from 'src/types';
 
 // ** Redux Store Imports
 import { fetchUsers } from 'src/store/slices/userSlice';
@@ -114,7 +114,7 @@ import { MyComponent, MyInterface, MyType } from 'src/common/types';
 import { MyComponent } from 'src/common/types';
 
 // ** Types Imports
-import type { MyInterface, MyType } from 'src/common/types';
+import { MyInterface, MyType } from 'src/common/types';
 ```
 
 ### 4. MUI Component Direct Imports
@@ -150,9 +150,9 @@ For imports with multiple named items, the extension formats them into multi-lin
 
 ```typescript
 import {
+  VeryLongComponentNameOne,
   AnotherVeryLongComponentNameTwo,
   YetAnotherLongComponentNameThree,
-  VeryLongComponentNameOne,
   AndOneMoreLongComponentNameFour,
 } from 'src/components/LongComponents';
 ```
@@ -163,8 +163,8 @@ import {
 import {
   VeryLongComponentNameOne,
   AnotherVeryLongComponentNameTwo,
-  AndOneMoreLongComponentNameFour,
   YetAnotherLongComponentNameThree,
+  AndOneMoreLongComponentNameFour,
 } from 'src/components/LongComponents';
 ```
 
