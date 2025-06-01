@@ -16,8 +16,8 @@
     "vscode": "^1.70.0"
   },
   "main": "./dist/extension.js",
-   "activationEvents": [
-    "onStartupFinished" 
+  "activationEvents": [
+    "onStartupFinished"
   ],
   "contributes": {
     "commands": [
@@ -29,7 +29,7 @@
     "keybindings": [
       {
         "command": "importFormatter.organizeImports",
-        "key": "alt+shift+d",
+        "key": "ctrl+shift+a",
         "when": "editorTextFocus"
       }
     ]
