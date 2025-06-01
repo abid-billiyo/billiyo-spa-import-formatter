@@ -194,11 +194,24 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
 
   const formatGroup = (label: string, lines: string[]): string[] => {
     if (!lines.length) return [];
-    const multiLineImports = lines.filter((line) => line.includes('\n'));
-    const singleLineImports = lines.filter((line) => !line.includes('\n'));
-    multiLineImports.sort((a, b) => a.length - b.length);
-    singleLineImports.sort((a, b) => a.length - b.length);
-    return [`// ** ${label} Imports`, ...multiLineImports, ...singleLineImports];
+
+    // Sort all imports by effective length
+    const sortedImports = lines.sort((a, b) => {
+      // Calculate effective length: for multi-line, use the length of the longest line
+      const getEffectiveLength = (imp: string) => {
+        if (!imp.includes('\n')) return imp.length;
+        const lines = imp.split('\n');
+        const longestLine = lines.reduce((max, line) => Math.max(max, line.length), 0);
+        return longestLine;
+      };
+
+      const aLength = getEffectiveLength(a);
+      const bLength = getEffectiveLength(b);
+
+      return aLength - bLength;
+    });
+
+    return [`// ** ${label} Imports`, ...sortedImports];
   };
 
   const finalOutput: string[] = [];
