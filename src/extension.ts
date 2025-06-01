@@ -54,6 +54,20 @@ function isSymbolATypeKind(kind: ts.ScriptElementKind | undefined): boolean {
 }
 
 function transformMuiImport(importLine: string): string[] {
+  // Check for Theme or SxProps imports from @mui/material and transform to /styles
+  const styleImportRegex = /import {([^}]+)} from ['"]@mui\/material['']/;
+  const styleMatch = importLine.match(styleImportRegex);
+  if (styleMatch) {
+    const namedImports = styleMatch[1]
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s);
+    if (namedImports.some((imp) => ['Theme', 'SxProps', 'useTheme', 'styled'].includes(imp))) {
+      return [importLine.replace('@mui/material', '@mui/material/styles').replace(/;\s*$/, '')];
+    }
+  }
+
+  // Handle component imports from @mui/material or @mui/icons-material
   const componentRegex = /import {([^}]+)} from ['"]@mui\/(material|icons-material)['']/;
   const match = importLine.match(componentRegex);
   if (!match) return [importLine.replace(/;\s*$/, '')];
@@ -143,6 +157,7 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
     hooks: [],
     utils: [],
     local: [],
+    config: [],
     other: [],
   };
 
@@ -194,7 +209,17 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
     return true;
   });
 
-  // Step 5: Process src/* Imports for Type Detection
+  // Step 5: Filter Config Imports (from 'src/configs')
+  remainingImports = remainingImports.filter((imp) => {
+    const modulePath = getModulePathFromImport(imp);
+    if (modulePath.startsWith('src/configs')) {
+      groups.config.push(imp);
+      return false;
+    }
+    return true;
+  });
+
+  // Step 6: Process src/* Imports for Type Detection
   const srcImports: { imp: string; originalImp: string; position: number }[] = [];
   remainingImports.forEach((imp, index) => {
     const modulePath = getModulePathFromImport(imp);
@@ -274,7 +299,7 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
     }
   }
 
-  // Step 6: Categorize Remaining Imports (Other Imports)
+  // Step 7: Categorize Remaining Imports (Other Imports)
   remainingImports.forEach((imp) => {
     groups.other.push(imp);
   });
@@ -307,6 +332,7 @@ export async function groupAndSortImports(imports: string[], document: vscode.Te
     'API',
     'Hooks',
     'Local',
+    'Config',
     'Utils',
     'Other',
   ];
@@ -396,6 +422,9 @@ export function activate(context: vscode.ExtensionContext) {
     await editor.edit((editBuilder) => {
       editBuilder.replace(fullRange, groupedAndSortedImports);
     });
+
+    // Auto-save the file after formatting
+    await document.save();
   });
 
   context.subscriptions.push(disposable);
