@@ -334,35 +334,55 @@ function getImportRange(document: vscode.TextDocument, imports: string[]): vscod
   if (!imports.length) return null;
   const text = document.getText();
 
-  const firstImportMatchIndex = text.indexOf(imports[0]);
-  const lastImportMatchIndex = text.lastIndexOf(imports[imports.length - 1]);
-  const lastImportLength = imports[imports.length - 1].length;
+  const firstImportString = imports[0];
+  const lastImportString = imports[imports.length - 1];
+
+  const firstImportMatchIndex = text.indexOf(firstImportString);
+  if (firstImportMatchIndex === -1) {
+    // Should ideally not happen if imports array is populated from the same document
+    return null;
+  }
+
+  const lastImportMatchIndex = text.lastIndexOf(lastImportString);
+  if (lastImportMatchIndex === -1) {
+    // Should ideally not happen
+    return null;
+  }
+
+  const lastImportLength = lastImportString.length;
   const lastImportEndIndex = lastImportMatchIndex + lastImportLength;
 
   let firstImportLineNum = document.positionAt(firstImportMatchIndex).line;
-  let lastImportLineNum = document.positionAt(lastImportMatchIndex).line;
-
+  // Scan upwards from the first import to include preceding blank lines or group comments
   while (firstImportLineNum > 0) {
     const currentLine = document.lineAt(firstImportLineNum - 1);
     const trimmedText = currentLine.text.trim();
     if (trimmedText === '' || (trimmedText.startsWith('// ** ') && trimmedText.endsWith(' Imports'))) {
       firstImportLineNum--;
     } else {
-      break;
+      break; // Found a non-empty, non-comment line, or reached the top
     }
   }
 
-  const trailingText = text.slice(lastImportEndIndex);
-  const onlyWhitespaceAfter = /^\s*$/.test(trailingText);
+  const rangeStart = document.lineAt(firstImportLineNum).range.start;
+
+  // Determine the end of the range
+  const trailingText = text.slice(lastImportEndIndex); // Text from the end of the last import string to EOF
+  const onlyWhitespaceAfter = /^\s*$/.test(trailingText); // True if that text is only whitespace
 
   let rangeEnd: vscode.Position;
   if (onlyWhitespaceAfter) {
+    // If only whitespace follows the import block, the range extends to the end of the document.
+    // This ensures that all trailing newlines after the import block are part of the replacement.
     rangeEnd = document.lineAt(document.lineCount - 1).range.end;
   } else {
-    rangeEnd = document.lineAt(lastImportLineNum).range.end;
+    // If there is substantive content after the import block,
+    // the range must end precisely after the last character of the last import string.
+    // This correctly handles multi-line import statements.
+    rangeEnd = document.positionAt(lastImportEndIndex);
   }
 
-  return new vscode.Range(document.lineAt(firstImportLineNum).range.start, rangeEnd);
+  return new vscode.Range(rangeStart, rangeEnd);
 }
 
 export function activate(context: vscode.ExtensionContext) {
