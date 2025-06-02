@@ -2,6 +2,37 @@ import * as vscode from 'vscode';
 import * as ts from 'typescript';
 import * as path from 'path';
 
+const GROUPS = [
+  { key: 'next', label: 'Next', match: (p: string) => p.startsWith('next/') },
+  { key: 'react', label: 'React', match: (p: string) => p === 'react' },
+  { key: 'mui', label: 'MUI', match: (p: string) => p.startsWith('@mui/') },
+  {
+    key: 'thirdparty',
+    label: 'Third Party',
+    match: (p: string) => !p.startsWith('src/') && p !== 'react' && !p.startsWith('next/') && !p.startsWith('@mui/'),
+  },
+  { key: 'types', label: 'Types', match: (_p: string, line: string) => line.startsWith('import') }, // changed from 'import type'
+  { key: 'reduxstore', label: 'Redux Store', match: (p: string) => p.startsWith('src/store/') },
+  { key: 'api', label: 'API', match: (p: string) => p.startsWith('src/api-clients/') },
+  { key: 'hooks', label: 'Hooks', match: (p: string) => p.includes('/hooks') },
+  { key: 'config', label: 'Config', match: (p: string) => p.startsWith('src/configs') },
+  {
+    key: 'local',
+    label: 'Local',
+    match: (p: string) =>
+      p.startsWith('src/') &&
+      !p.startsWith('src/store/') &&
+      !p.startsWith('src/api-clients/') &&
+      !p.startsWith('src/configs') &&
+      !p.includes('/hooks') &&
+      !p.includes('/utils'),
+  },
+  { key: 'utils', label: 'Utils', match: (p: string) => p.includes('/utils') },
+  { key: 'other', label: 'Other', match: () => true },
+];
+
+const MUI_STYLE_TOKENS = ['Direction', 'Theme', 'SxProps', 'useTheme', 'styled'];
+
 async function getSymbolScriptElementKind(
   document: vscode.TextDocument,
   position: vscode.Position,
@@ -13,13 +44,8 @@ async function getSymbolScriptElementKind(
       document.uri,
       position
     );
-
-    console.log(`Hover position for ${symbolName}: Line ${position.line}, Character ${position.character}`);
-
     if (hovers && hovers.length > 0) {
       const hoverContent = hovers[0].contents.map((c) => (typeof c === 'string' ? c : c.value)).join('\n');
-      console.log(`Hover content for ${symbolName}: ${hoverContent}`);
-
       if (/\binterface\b|\(interface\)|interface\s+\w+/i.test(hoverContent))
         return ts.ScriptElementKind.interfaceElement;
       if (/\btype\b|\(alias\)\s*type\s+\w+|\(type\)|type\s+\w+/i.test(hoverContent))
@@ -34,7 +60,7 @@ async function getSymbolScriptElementKind(
         return ts.ScriptElementKind.functionElement;
     }
   } catch (e) {
-    console.error(`Error fetching hover for ${symbolName}:`, e);
+    // Silent error
   }
   return undefined;
 }
@@ -53,34 +79,31 @@ function isSymbolATypeKind(kind: ts.ScriptElementKind | undefined): boolean {
 }
 
 function transformMuiImport(importLine: string): string[] {
-  const styleImportRegex = /import {([^}]+)} from ['"]@mui\/material['']/;
+  const styleImportRegex = /import {([^}]+)} from ['"]@mui\/material['"]/;
   const styleMatch = importLine.match(styleImportRegex);
   if (styleMatch) {
     const namedImports = styleMatch[1]
       .split(',')
       .map((s) => s.trim())
-      .filter((s) => s);
-    if (namedImports.some((imp) => ['Theme', 'SxProps', 'useTheme', 'styled'].includes(imp))) {
-      return [importLine.replace('@mui/material', '@mui/material/styles').replace(/;\s*$/, '')];
+      .filter(Boolean);
+    const styleTokens = namedImports.filter((imp) => MUI_STYLE_TOKENS.includes(imp));
+    const components = namedImports.filter(
+      (imp) => !MUI_STYLE_TOKENS.includes(imp) && /^[A-Z]/.test(imp) && !imp.endsWith('Props')
+    );
+    const result: string[] = [];
+    if (styleTokens.length > 0) {
+      result.push(`import { ${styleTokens.join(', ')} } from '@mui/material/styles'`);
     }
+    for (const comp of components) {
+      result.push(`import ${comp} from '@mui/material/${comp}'`);
+    }
+    const others = namedImports.filter((imp) => !styleTokens.includes(imp) && !components.includes(imp));
+    if (others.length > 0) {
+      result.push(`import { ${others.join(', ')} } from '@mui/material'`);
+    }
+    return result;
   }
-
-  const componentRegex = /import {([^}]+)} from ['"]@mui\/(material|icons-material)['']/;
-  const match = importLine.match(componentRegex);
-  if (!match) return [importLine.replace(/;\s*$/, '')];
-
-  const namedImports = match[1]
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s);
-  const modulePath = match[2];
-
-  const allAreComponents = namedImports.every((imp) => /^[A-Z]/.test(imp) && !imp.endsWith('Props'));
-  if (allAreComponents) {
-    return namedImports.map((imp) => `import ${imp} from '@mui/${modulePath}/${imp}'`);
-  } else {
-    return [importLine.replace(/;\s*$/, '')];
-  }
+  return [importLine.replace(/;\s*$/, '')];
 }
 
 function getModulePathFromImport(importLine: string): string {
@@ -91,23 +114,23 @@ function getModulePathFromImport(importLine: string): string {
   return '';
 }
 
-function formatImportStatement(imports: string[], modulePath: string): string {
-  const importList = imports.join(', ');
-  const singleLine = `import { ${importList} } from '${modulePath}'`;
+function formatImportStatement(imports: string[], modulePath: string, typeOnly = false): string {
+  const sortedImports = [...imports].sort((a, b) => a.length - b.length);
+  const importList = sortedImports.join(', ');
+  // REMOVE "type" for typeOnly import
+  const importType = 'import';
+  const singleLine = `${importType} { ${importList} } from '${modulePath}'`;
 
   if (imports.length === 1) {
     return singleLine;
   }
 
-  // Always sort named imports by length for multi-line formatting
-  const sortedImports = imports.sort((a, b) => a.length - b.length);
   if (singleLine.length > 120) {
-    const formattedImports = sortedImports.map((imp) => `  ${imp}`).join(',\n');
-    return `import {\n${formattedImports},\n} from '${modulePath}'`;
+    const formattedImports = sortedImports.map((imp) => `  ${imp},`).join('\n');
+    return `${importType} {\n${formattedImports}\n} from '${modulePath}'`;
   }
 
-  // If not multi-line, but still more than one import, sort for consistency
-  return `import { ${sortedImports.join(', ')} } from '${modulePath}'`;
+  return `${importType} { ${importList} } from '${modulePath}'`;
 }
 
 async function convertRelativeImportsToAbsolute(importLine: string, document: vscode.TextDocument): Promise<string> {
@@ -126,88 +149,52 @@ async function convertRelativeImportsToAbsolute(importLine: string, document: vs
   if (absolutePath.startsWith(workspaceRoot)) {
     const relativeToSrc = path.relative(path.join(workspaceRoot, 'src'), absolutePath);
     const normalizedPath = relativeToSrc.replace(/\\/g, '/');
-    if (normalizedPath) {
+    if (normalizedPath && !normalizedPath.startsWith('..')) {
       modulePath = `src/${normalizedPath}`;
     }
   }
 
-  const convertedImport = importLine.replace(match[1], modulePath).replace(/;\s*$/, '');
-  console.log(`Converted ${importLine} to ${convertedImport}`);
-  return convertedImport;
+  return importLine.replace(match[1], modulePath).replace(/;\s*$/, '');
 }
 
 async function groupAndSortImports(
   importPairs: { original: string; converted: string }[],
   document: vscode.TextDocument
 ): Promise<string> {
-  const groups: Record<string, string[]> = {
-    next: [],
-    react: [],
-    mui: [],
-    thirdparty: [],
-    types: [],
-    reduxstore: [],
-    api: [],
-    hooks: [],
-    utils: [],
-    local: [],
-    config: [],
-    other: [],
-  };
+  const groupBuckets: Record<string, string[]> = {};
+  GROUPS.forEach((g) => {
+    groupBuckets[g.key] = [];
+  });
 
   let remainingImports = [...importPairs];
+  for (const group of GROUPS) {
+    if (['types', 'reduxstore', 'api', 'hooks', 'config', 'local', 'utils', 'other'].includes(group.key)) continue;
+    remainingImports = remainingImports.filter((pair) => {
+      const modulePath = getModulePathFromImport(pair.converted);
+      if (group.match(modulePath, pair.converted)) {
+        if (group.key === 'mui') {
+          const transformed = transformMuiImport(pair.converted);
+          groupBuckets[group.key].push(...transformed);
+        } else {
+          groupBuckets[group.key].push(pair.converted);
+        }
+        return false;
+      }
+      return true;
+    });
+  }
 
+  // Config
   remainingImports = remainingImports.filter((pair) => {
     const modulePath = getModulePathFromImport(pair.converted);
-    if (modulePath.startsWith('next/')) {
-      groups.next.push(pair.converted);
+    if (GROUPS.find((g) => g.key === 'config')!.match(modulePath, pair.converted)) {
+      groupBuckets['config'].push(pair.converted);
       return false;
     }
     return true;
   });
 
-  remainingImports = remainingImports.filter((pair) => {
-    const modulePath = getModulePathFromImport(pair.converted);
-    if (modulePath === 'react') {
-      groups.react.push(pair.converted);
-      return false;
-    }
-    return true;
-  });
-
-  remainingImports = remainingImports.filter((pair) => {
-    const modulePath = getModulePathFromImport(pair.converted);
-    if (modulePath.startsWith('@mui/')) {
-      const transformed = transformMuiImport(pair.converted);
-      groups.mui.push(...transformed);
-      return false;
-    }
-    return true;
-  });
-
-  remainingImports = remainingImports.filter((pair) => {
-    const modulePath = getModulePathFromImport(pair.converted);
-    if (
-      !modulePath.startsWith('src/') &&
-      modulePath !== 'react' &&
-      !modulePath.startsWith('next/') &&
-      !modulePath.startsWith('@mui/')
-    ) {
-      groups.thirdparty.push(pair.converted);
-      return false;
-    }
-    return true;
-  });
-
-  remainingImports = remainingImports.filter((pair) => {
-    const modulePath = getModulePathFromImport(pair.converted);
-    if (modulePath.startsWith('src/configs')) {
-      groups.config.push(pair.converted);
-      return false;
-    }
-    return true;
-  });
-
+  // src/ imports -- type/value separation
   const srcImports: { original: string; converted: string; position: number }[] = [];
   remainingImports.forEach((pair) => {
     const modulePath = getModulePathFromImport(pair.converted);
@@ -218,82 +205,92 @@ async function groupAndSortImports(
   });
   remainingImports = remainingImports.filter((pair) => !getModulePathFromImport(pair.converted).startsWith('src/'));
 
-  for (const { original, converted, position } of srcImports) {
-    const modulePath = getModulePathFromImport(converted);
+  await Promise.all(
+    srcImports.map(async ({ original, converted, position }) => {
+      const modulePath = getModulePathFromImport(converted);
 
-    if (converted.startsWith('import type')) {
-      groups.types.push(converted);
-      continue;
-    }
-
-    const defaultImportMatch = converted.match(/import (\w+) from ['"]([^'"]+)['"]/);
-    if (defaultImportMatch) {
-      const identifier = defaultImportMatch[1];
-      const identifierIndex = original.indexOf(identifier);
-      const hoverPosition = document.positionAt(position + identifierIndex);
-      const kind = await getSymbolScriptElementKind(document, hoverPosition, identifier);
-      console.log(
-        `Default import: ${converted}, Kind: ${kind}, Position: ${hoverPosition.line},${hoverPosition.character}`
-      );
-      if (isSymbolATypeKind(kind)) {
-        groups.types.push(converted);
-      } else {
-        categorizeSrcImport(converted, modulePath, groups, kind);
-      }
-      continue;
-    }
-
-    const namedImportsMatch = converted.match(/import {([^}]+)} from ['"]([^'"]+)['"]/);
-    if (namedImportsMatch) {
-      const namedImports = namedImportsMatch[1]
-        .split(',')
-        .map((s) => s.trim())
-        .filter((s) => s);
-      const startIdx = position;
-
-      const symbolClassifications = await Promise.all(
-        namedImports.map(async (name) => {
-          const relativeIndex = original.indexOf(name);
-          if (relativeIndex === -1) return { name, isType: false };
-          const absoluteIndex = startIdx + relativeIndex;
-          const hoverPosition = document.positionAt(absoluteIndex);
-          const kind = await getSymbolScriptElementKind(document, hoverPosition, name);
-          console.log(
-            `Named import: ${name} from ${modulePath}, Kind: ${kind}, Position: ${hoverPosition.line},${hoverPosition.character}`
-          );
-          return { name, isType: isSymbolATypeKind(kind) };
-        })
-      );
-
-      const typesToImport = symbolClassifications.filter((s) => s.isType).map((s) => s.name);
-      const nonTypesToImport = symbolClassifications.filter((s) => !s.isType).map((s) => s.name);
-
-      if (typesToImport.length > 0) {
-        const typesImportLine = formatImportStatement(typesToImport, modulePath);
-        groups.types.push(typesImportLine);
+      // Default import
+      const defaultImportMatch = converted.match(/import (\w+) from ['"]([^'"]+)['"]/);
+      if (defaultImportMatch) {
+        const identifier = defaultImportMatch[1];
+        const identifierIndex = original.indexOf(identifier);
+        const hoverPosition = document.positionAt(position + identifierIndex);
+        const kind = await getSymbolScriptElementKind(document, hoverPosition, identifier);
+        if (isSymbolATypeKind(kind)) {
+          groupBuckets['types'].push(`import ${identifier} from '${modulePath}'`);
+        } else {
+          categorizeSrcImport(converted, modulePath, groupBuckets, kind);
+        }
+        return;
       }
 
-      if (nonTypesToImport.length > 0) {
-        const nonTypesImportLine = formatImportStatement(nonTypesToImport, modulePath);
-        categorizeSrcImport(nonTypesImportLine, modulePath, groups);
-      }
-    } else {
-      categorizeSrcImport(converted, modulePath, groups);
-    }
-  }
+      // Named imports
+      const namedImportsMatch = converted.match(/import {([^}]+)} from ['"]([^'"]+)['"]/);
+      if (namedImportsMatch) {
+        const namedImports = namedImportsMatch[1]
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const startIdx = position;
 
+        const symbolClassifications = await Promise.all(
+          namedImports.map(async (name) => {
+            const relativeIndex = original.indexOf(name);
+            if (relativeIndex === -1) return { name, isType: false };
+            const absoluteIndex = startIdx + relativeIndex;
+            const hoverPosition = document.positionAt(absoluteIndex);
+            const kind = await getSymbolScriptElementKind(document, hoverPosition, name);
+            return { name, isType: isSymbolATypeKind(kind) };
+          })
+        );
+
+        const typesToImport = symbolClassifications.filter((s) => s.isType).map((s) => s.name);
+        const nonTypesToImport = symbolClassifications.filter((s) => !s.isType).map((s) => s.name);
+
+        // Only types, only add the types import and return immediately.
+        if (typesToImport.length > 0 && nonTypesToImport.length === 0) {
+          const typesImportLine = formatImportStatement(typesToImport, modulePath, true);
+          if (!groupBuckets['types'].includes(typesImportLine)) {
+            groupBuckets['types'].push(typesImportLine);
+          }
+          return;
+        }
+
+        // Mixed: add both, then return
+        if (typesToImport.length > 0 && nonTypesToImport.length > 0) {
+          const typesImportLine = formatImportStatement(typesToImport, modulePath, true);
+          if (!groupBuckets['types'].includes(typesImportLine)) {
+            groupBuckets['types'].push(typesImportLine);
+          }
+          const nonTypesImportLine = formatImportStatement(nonTypesToImport, modulePath);
+          categorizeSrcImport(nonTypesImportLine, modulePath, groupBuckets);
+          return;
+        }
+
+        // Only value imports
+        if (nonTypesToImport.length > 0) {
+          const nonTypesImportLine = formatImportStatement(nonTypesToImport, modulePath);
+          categorizeSrcImport(nonTypesImportLine, modulePath, groupBuckets);
+        }
+        return;
+      }
+
+      categorizeSrcImport(converted, modulePath, groupBuckets);
+    })
+  );
+
+  // All remaining imports
   remainingImports.forEach((pair) => {
-    groups.other.push(pair.converted);
+    groupBuckets['other'].push(pair.converted);
   });
 
+  // Format groups
   const formatGroup = (label: string, lines: string[]): string[] => {
     if (!lines.length) return [];
     const sortedImports = lines.sort((a, b) => {
       const getEffectiveLength = (imp: string) => {
         if (!imp.includes('\n')) return imp.length;
-        const lines = imp.split('\n');
-        const longestLine = lines.reduce((max, line) => Math.max(max, line.length), 0);
-        return longestLine;
+        return Math.max(...imp.split('\n').map((line) => line.length));
       };
       return getEffectiveLength(a) - getEffectiveLength(b);
     });
@@ -302,67 +299,48 @@ async function groupAndSortImports(
 
   const finalOutput: string[] = [];
   let firstGroup = true;
-  const groupOrder = [
-    'Next',
-    'React',
-    'MUI',
-    'Third Party',
-    'Types',
-    'Redux Store',
-    'API',
-    'Hooks',
-    'Local',
-    'Config',
-    'Utils',
-    'Other',
-  ];
-
-  for (const label of groupOrder) {
-    const groupKey = label.toLowerCase().replace(/\s/g, '');
-    const groupLines = formatGroup(label, groups[groupKey]);
+  for (const group of GROUPS) {
+    const groupLines = formatGroup(group.label, groupBuckets[group.key]);
     if (groupLines.length > 0) {
       if (!firstGroup) finalOutput.push('');
       finalOutput.push(...groupLines);
       firstGroup = false;
     }
   }
-
   return finalOutput.join('\n');
 }
 
 function categorizeSrcImport(
   importLine: string,
   modulePath: string,
-  groups: Record<string, string[]>,
+  buckets: Record<string, string[]>,
   kind?: ts.ScriptElementKind
 ) {
-  console.log(`Categorizing src import: ${importLine}, Module: ${modulePath}, Kind: ${kind}`);
-  if (modulePath.startsWith('src/store/')) {
-    groups.reduxstore.push(importLine);
-  } else if (modulePath.startsWith('src/api-clients/') && (kind === undefined || !isSymbolATypeKind(kind))) {
-    groups.api.push(importLine);
-  } else if (modulePath.includes('/hooks')) {
-    groups.hooks.push(importLine);
-  } else if (modulePath.includes('/utils')) {
-    groups.utils.push(importLine);
-  } else if (modulePath.startsWith('src/') && isSymbolATypeKind(kind)) {
-    groups.types.push(importLine);
-  } else if (modulePath.startsWith('src/')) {
-    groups.local.push(importLine);
-  } else {
-    groups.other.push(importLine);
+  for (const group of GROUPS) {
+    if (group.key === 'types' && isSymbolATypeKind(kind)) {
+      buckets[group.key].push(importLine);
+      return;
+    }
+    if (['types', 'other'].includes(group.key)) continue;
+    if (group.match(modulePath, importLine)) {
+      buckets[group.key].push(importLine);
+      return;
+    }
   }
+  buckets['other'].push(importLine);
 }
 
 function getImportRange(document: vscode.TextDocument, imports: string[]): vscode.Range | null {
   if (!imports.length) return null;
-
   const text = document.getText();
+
   const firstImportMatchIndex = text.indexOf(imports[0]);
   const lastImportMatchIndex = text.lastIndexOf(imports[imports.length - 1]);
+  const lastImportLength = imports[imports.length - 1].length;
+  const lastImportEndIndex = lastImportMatchIndex + lastImportLength;
 
   let firstImportLineNum = document.positionAt(firstImportMatchIndex).line;
-  const lastImportLineNum = document.positionAt(lastImportMatchIndex).line;
+  let lastImportLineNum = document.positionAt(lastImportMatchIndex).line;
 
   while (firstImportLineNum > 0) {
     const currentLine = document.lineAt(firstImportLineNum - 1);
@@ -374,10 +352,17 @@ function getImportRange(document: vscode.TextDocument, imports: string[]): vscod
     }
   }
 
-  return new vscode.Range(
-    document.lineAt(firstImportLineNum).range.start,
-    document.lineAt(lastImportLineNum).range.end
-  );
+  const trailingText = text.slice(lastImportEndIndex);
+  const onlyWhitespaceAfter = /^\s*$/.test(trailingText);
+
+  let rangeEnd: vscode.Position;
+  if (onlyWhitespaceAfter) {
+    rangeEnd = document.lineAt(document.lineCount - 1).range.end;
+  } else {
+    rangeEnd = document.lineAt(lastImportLineNum).range.end;
+  }
+
+  return new vscode.Range(document.lineAt(firstImportLineNum).range.start, rangeEnd);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -387,25 +372,21 @@ export function activate(context: vscode.ExtensionContext) {
 
     const document = editor.document;
     const text = document.getText();
-    const importRegex = /^import(?:["'\s]*(?:[\w*{}\n\r\t, ]+)from\s*)?["'`].*["'`];?\s*$/gm;
+    const importRegex = /^import[\s\S]*?from\s*['"][^'"]+['"];?/gm;
     const importMatches = [...text.matchAll(importRegex)];
     const originalImports = importMatches.map((m) => m[0].trim());
 
     if (!originalImports.length) return;
 
-    // Create pairs of original and converted imports
     const importPairs = await Promise.all(
       originalImports.map(async (imp) => {
         const converted = await convertRelativeImportsToAbsolute(imp, document);
         return { original: imp, converted };
       })
     );
-    console.log('Import Pairs:', importPairs);
 
-    // Group and sort imports
     const groupedAndSortedImports = await groupAndSortImports(importPairs, document);
 
-    // Replace imports in one edit operation
     const importRange = getImportRange(document, originalImports);
     if (!importRange) return;
 
@@ -413,7 +394,6 @@ export function activate(context: vscode.ExtensionContext) {
       editBuilder.replace(importRange, groupedAndSortedImports);
     });
 
-    // Auto-save the file after formatting
     await document.save();
   });
 
