@@ -99,13 +99,15 @@ function formatImportStatement(imports: string[], modulePath: string): string {
     return singleLine;
   }
 
+  // Always sort named imports by length for multi-line formatting
+  const sortedImports = imports.sort((a, b) => a.length - b.length);
   if (singleLine.length > 120) {
-    const sortedImports = imports.sort((a, b) => a.length - b.length);
     const formattedImports = sortedImports.map((imp) => `  ${imp}`).join(',\n');
-    return `import {\n${formattedImports}\n} from '${modulePath}'`;
+    return `import {\n${formattedImports},\n} from '${modulePath}'`;
   }
 
-  return singleLine;
+  // If not multi-line, but still more than one import, sort for consistency
+  return `import { ${sortedImports.join(', ')} } from '${modulePath}'`;
 }
 
 async function convertRelativeImportsToAbsolute(importLine: string, document: vscode.TextDocument): Promise<string> {
