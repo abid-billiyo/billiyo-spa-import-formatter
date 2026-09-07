@@ -1,5 +1,17 @@
 # Import Formatter
 
+## Download (Prebuilt VSIX)
+
+You can download the packaged extension from GitHub Releases:
+
+- Release page: https://github.com/billiyo/billiyo-spa-import-formatter/releases/tag/v0.0.2
+
+From that page, download the `import-formatter-0.0.2.vsix` asset and install it in VS Code using **Extensions: Install from VSIX...**.
+
+## Build It Yourself
+
+If you prefer, you can build the extension package locally.
+
 This VS Code extension automates the organization of import statements in TypeScript and JavaScript files. It offers several features to keep your imports clean, consistent, and readable.
 
 ## Features
@@ -168,10 +180,17 @@ import {
 } from 'src/components/LongComponents';
 ```
 
-## How to Use
+## Build and Use Locally
 
-1.  **Install the Extension:** Install the `.vsix` file manually in VS Code.
-2.  **Run the Command:** Open a TypeScript or JavaScript file.
-    - Use the shortcut `Alt+Shift+D`.
+1. Run the following command in your terminal:
+   ```bash
+   npm run package
+   ```
+   (If asked for LICENSE file, you can type "y" to proceed)
+2. This will create a `.vsix` file in the root directory of the project.
+
+3. **Install the Extension:** Install the `.vsix` file manually in VS Code.
+4. **Run the Command:** Open a TypeScript or JavaScript file.
+   - Use the shortcut `Ctrl+Shift+A`.
 
 The extension will automatically reformat your import statements according to the rules described above.

@@ -2,11 +2,11 @@
   "name": "import-formatter",
   "displayName": "Import Formatter",
   "description": "Groups, sorts, and formats imports by category and line length, including absolute path conversion and type splitting.",
-  "version": "0.0.1",
-  "publisher": "abid",
+  "version": "0.0.6",
+  "publisher": "billiyo",
   "author": {
     "name": "Abid Shahriar",
-    "email": "abidshahriar7@gmail.com"
+    "email": "abid.shahriar@gadiid.com"
   },
   "repository": {
     "type": "git",
@@ -38,14 +38,19 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "package": "vsce package",
+    "pretest": "npm run compile",
+    "test": "node test/run.js",
+    "test:update": "npm run compile && node test/suites/behavior.js --update"
   },
   "devDependencies": {
     "@types/node": "^22.15.29",
     "@types/vscode": "^1.70.0",
+    "oxfmt": "^0.63.0",
+    "typescript": "^7.0.2",
     "vsce": "^2.15.0"
   },
   "dependencies": {
-    "typescript": "^5.8.3"
+    "typescript-api": "npm:typescript@^5.8.3"
   }
 }
